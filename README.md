@@ -197,6 +197,86 @@ npx -y @smithery/cli install @effytech/freshdesk_mcp --client claude
 - Replace `YOUR_FRESHDESK_API_KEY` with your actual Freshdesk API key
 - Replace `YOUR_FRESHDESK_DOMAIN` with your Freshdesk domain (e.g., `yourcompany.freshdesk.com`)
 
+## Public deployment with per-user OAuth (Claude custom connector)
+
+Besides the local stdio mode above, the server can run on a public HTTPS URL. There is then
+**no central API key**: every user connects with their own Freshdesk API key through an
+OAuth consent screen, and every tool call runs with that user's own Freshdesk permissions.
+
+### How it works
+
+1. An organisation Owner adds the server once as a custom connector in Claude, using the URL
+   `https://<your-host>/mcp`. Claude registers itself automatically via Dynamic Client Registration.
+2. Each member clicks **Connect**. Claude opens the server's consent page, where the member enters
+   their Freshdesk API key (Freshdesk → profile picture → *Profile settings* → *View API key*).
+3. The server checks the key with `GET /api/v2/agents/me`, then shows who is signed in and the domain
+   the user will be redirected to (for example `claude.ai`). It also lists the user's existing
+   connections, each with a **Revoke** button.
+4. After **Approve**, Claude receives an access token (8 h) and a rotating refresh token (90 days,
+   sliding). Claude never sees the API key.
+
+Users can review and revoke their connections at any time at `https://<your-host>/grants`.
+If a user regenerates their Freshdesk API key, the old connection is removed on its next failed
+call and Claude asks them to reconnect.
+
+### How the API keys are stored
+
+Each connection is a file in `FRESHDESK_MCP_DATA_DIR/grants/`. The API key and all metadata
+(redirect URI and domain, user name and email, date granted, date last used) are encrypted
+with AES-256-GCM under a random per-connection data key. That data key is stored only in
+wrapped (encrypted) form, under keys derived from:
+
+- the OAuth access token and the refresh token (used on every MCP request and on token refresh);
+- the Freshdesk API key itself, through scrypt (used when the user comes back to list or revoke
+  their connections);
+- the one-time authorization code, briefly, until Claude exchanges it.
+
+Tokens and codes are never stored, not even as hashes. Every key derivation also mixes in
+`FRESHDESK_MCP_SECRET`, so a copy of the data directory alone is not enough. Revoking a connection
+deletes its file.
+
+This protects the keys at rest (disk, backups). It does not protect against someone who can change
+the code of the running server, because the server necessarily handles the key in memory while it
+calls Freshdesk.
+
+### Configuration
+
+| Variable | Required | Description |
+|---|---|---|
+| `FRESHDESK_MCP_TRANSPORT` | yes | `http` (or pass `--transport http`) |
+| `FRESHDESK_DOMAIN` | yes | Your Freshdesk domain, e.g. `yourcompany.freshdesk.com` (fixed for all users) |
+| `PUBLIC_BASE_URL` | yes | Public HTTPS URL of the server, without a path, e.g. `https://freshdesk-mcp.example.com` |
+| `FRESHDESK_MCP_SECRET` | yes | At least 32 random characters (`openssl rand -base64 48`). Keep it stable: changing it invalidates all connections |
+| `FRESHDESK_MCP_DATA_DIR` | no | Grant store directory (default `./data`, `/data` in Docker). Must be persistent |
+| `HOST` / `PORT` | no | Listen address (default `127.0.0.1:8000`, `0.0.0.0:8000` in Docker) |
+| `ACCESS_TOKEN_TTL` / `REFRESH_TOKEN_TTL` | no | Seconds (default 28800 / 7776000) |
+| `ALLOWED_REDIRECT_URIS` | no | Comma-separated OAuth redirect URIs that clients may register. The default is Claude's `https://claude.ai/api/mcp/auth_callback` and `https://claude.com/api/mcp/auth_callback`, plus `http://localhost/callback` and `http://127.0.0.1/callback` (any port) for Claude Code. Loopback redirects get a warning on the consent page |
+| `FORWARDED_ALLOW_IPS` | no | IPs of the reverse proxy whose `X-Forwarded-*` headers are trusted (uvicorn) |
+
+### Running with Docker behind a reverse proxy
+
+See [`docker-compose.example.yml`](docker-compose.example.yml) for a complete example with Caddy
+providing HTTPS:
+
+```bash
+cp docker-compose.example.yml docker-compose.yml   # edit domain and host names
+export FRESHDESK_MCP_SECRET=$(openssl rand -base64 48)   # store it safely
+docker compose up -d
+```
+
+Requirements:
+
+- The URL configured in Claude must be exactly `PUBLIC_BASE_URL` + `/mcp`.
+- The reverse proxy must pass `/mcp`, `/.well-known/*`, `/register`, `/authorize`, `/token`,
+  `/revoke`, `/consent` and `/grants` through unchanged, including the `Host` header.
+- Claude's servers connect from `160.79.104.0/21`. Users' browsers must also be able to reach the
+  consent page.
+- Run a single instance. Consent requests in progress are held in memory, so a restart only means
+  a user who is on the consent page at that moment has to try again.
+
+Then an organisation Owner adds a custom connector in Claude's admin settings (Connectors) with the URL
+`https://<your-host>/mcp`, leaving the optional OAuth client ID and secret empty.
+
 ## Example Operations
 
 Once configured, you can ask Claude to perform operations like:
@@ -213,6 +293,12 @@ For testing purposes, you can start the server manually:
 
 ```bash
 uvx freshdesk-mcp --env FRESHDESK_API_KEY=<your_api_key> --env FRESHDESK_DOMAIN=<your_domain>
+```
+
+Automated tests, including an end-to-end test of the OAuth flow with Freshdesk mocked:
+
+```bash
+uv run --group dev pytest
 ```
 
 ## Troubleshooting

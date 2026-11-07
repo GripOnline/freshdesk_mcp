@@ -7,7 +7,9 @@ requires-python = ">=3.10"
 dependencies = [
     "build>=1.2.2.post1",
     "httpx==0.28.1",
-    "mcp[cli]>=1.3.0",
+    "mcp[cli]>=1.30.0,<2",
+    "cryptography>=43",
+    "uvicorn>=0.30",
     "pydantic>=2.10.6",
 ]
 
@@ -18,6 +20,18 @@ email = "gopi@effy.co.in"
 [[project.authors]]
 name = "Maanaesh Swamy"
 email = "maanaesh.s@effy.co.in"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
 
 [build-system]
 requires = [ "hatchling", "setuptools", "wheel"]

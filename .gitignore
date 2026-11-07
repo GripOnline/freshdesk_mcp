@@ -174,3 +174,7 @@ cython_debug/
 .pypirc
 memory-bank
 .cursor
+
+# Local OAuth grant store
+data/
+docker-compose.yml
