@@ -1,0 +1,32 @@
+# Public deployment of the Freshdesk MCP server with per-user OAuth.
+# Copy to docker-compose.yml, fill in the values, then: docker compose up -d
+services:
+  freshdesk-mcp:
+    build: .
+    restart: unless-stopped
+    environment:
+      FRESHDESK_MCP_TRANSPORT: http
+      FRESHDESK_DOMAIN: yourcompany.freshdesk.com
+      PUBLIC_BASE_URL: https://freshdesk-mcp.example.com
+      # Generate once with: openssl rand -base64 48   (keep it secret, keep it stable)
+      FRESHDESK_MCP_SECRET: ${FRESHDESK_MCP_SECRET:?set FRESHDESK_MCP_SECRET}
+      # Trust X-Forwarded-For from the reverse proxy (only reachable through it)
+      FORWARDED_ALLOW_IPS: "*"
+    volumes:
+      - freshdesk-mcp-data:/data
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    command: caddy reverse-proxy --from freshdesk-mcp.example.com --to freshdesk-mcp:8000
+    volumes:
+      - caddy-data:/data
+
+volumes:
+  freshdesk-mcp-data:
+  caddy-data:

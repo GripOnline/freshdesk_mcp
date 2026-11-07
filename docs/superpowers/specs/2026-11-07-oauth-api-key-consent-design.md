@@ -1,6 +1,21 @@
 # Design: public HTTPS deployment with per-user OAuth (Freshdesk API key consent)
 
-Status: **plan — not implemented yet**
+Status: **implemented**
+
+Decisions: Freshdesk domain fixed via `FRESHDESK_DOMAIN`; tokens 8 h access / 90-day sliding
+refresh; loopback (Claude Code) redirects allowed with a warning; Docker behind a reverse proxy,
+single instance.
+
+Implementation notes (where the build differs from or adds to the plan below):
+- SDK: `mcp>=1.30,<2` (latest 1.x) rather than 2.x, so the existing `FastMCP` code keeps working.
+  `http_server.configure_oauth` attaches the provider to the module-level instance.
+- Token format is `fdm_<kind>.<grant_id>.<secret>`: `.` separators, because base64url contains `_`.
+- The scrypt salt for the API-key wrap is derived from the owner id, so listing a user's grants
+  needs only one scrypt derivation.
+- `/grants` keeps its own session store, so visits to it cannot evict OAuth consent sessions.
+- The Streamable HTTP transport is stateless, so MCP sessions survive restarts.
+- The names of non-Claude clients (self-declared at DCR) are shown as unverified.
+- Tests: `tests/test_oauth.py` (full flow, Freshdesk mocked).
 
 ## Goal
 
